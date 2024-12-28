@@ -1,0 +1,539 @@
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js')
+    .then(registration => {
+      console.log('Service Worker registered with scope:', registration.scope);
+    })
+    .catch(error => {
+      console.error('Service Worker registration failed:', error);
+    });
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBj6J8lFyp33rElH_CrzFLTAMGwh8YqDYA&libraries=places" async defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vending Route Manager</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+    }
+    h1, h2 {
+      margin: 20px 0;
+    }
+    .button-container {
+      margin: 20px 0;
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+    }
+    .icon-button {
+      border: none;
+      background: none;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .icon-button img {
+      width: 100px;
+      height: 100px;
+    }
+    .icon-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+    }
+    .icon-button:active {
+      transform: translateY(4px);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    .screen {
+      display: none;
+    }
+    .screen.active {
+      display: block;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+    li {
+      margin: 10px 0;
+    }
+    .input-box {
+      width: 80%;
+      padding: 10px;
+      margin: 10px 0;
+    }
+    #suggestion-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      border: 1px solid #ccc;
+      max-width: 80%;
+      margin: 0 auto;
+      display: none;
+    }
+    #suggestion-list li {
+      padding: 5px;
+      cursor: pointer;
+      background-color: #fff;
+      border-bottom: 1px solid #ddd;
+    }
+    #suggestion-list li:hover {
+      background-color: #f0f0f0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Main Screen -->
+  <div id="main-screen" class="screen active">
+    <h1>Welcome to the Vending Route Manager</h1>
+    <div class="button-container">
+      <button class="icon-button" data-screen="admin-screen">
+        <img src="admin-icon.png" alt="Admin Tools">
+        <p>Admin Tools</p>
+      </button>
+      <button class="icon-button" data-screen="driver-screen">
+        <img src="driver-icon.png" alt="Driver Dashboard">
+        <p>Driver Dashboard</p>
+      </button>
+      <button class="icon-button" data-screen="settings-screen">
+        <img src="settings-icon.png" alt="Settings & Info">
+        <p>Settings & Info</p>
+      </button>
+    </div>
+  </div>
+
+  <!-- Admin Tools Screen -->
+  <div id="admin-screen" class="screen">
+  <h1>Admin Tools</h1>
+  <p>Manage stops and settings here.</p>
+
+  <!-- Display Current Stops -->
+  <h2>Current Stops</h2>
+  <ul id="stop-list"></ul>
+
+  <!-- Add/Edit Form -->
+  <h2>Add or Edit a Stop</h2>
+  <form id="stop-form">
+    <input type="text" id="stop-name" placeholder="Stop Name" required>
+    <input type="text" id="stop-address" placeholder="Stop Address" required>
+    <button type="submit">Save Stop</button>
+  </form>
+
+  <button id="save-json">Download Updated List</button>
+  <button data-screen="main-screen">Back to Main</button>
+</div>
+
+
+  <!-- Driver Dashboard Screen -->
+  <div id="driver-screen" class="screen">
+    <h1>Driver Dashboard</h1>
+    <p>Enter your stops for today:</p>
+
+    <!-- Single Search and Input Box -->
+    <input
+      type="text"
+      id="stop-search"
+      class="input-box"
+      placeholder="Type a stop name or address..."
+    />
+    <ul id="suggestion-list"></ul>
+
+    <!-- Added Stops -->
+    <h2>Today's Stops</h2>
+    <ul id="selected-stops"></ul>
+
+    <!-- Completed Stops -->
+    <h2>Completed Stops</h2>
+    <ul id="completed-stops"></ul>
+
+    <!-- Map Display -->
+    <div id="map" style="height: 400px; width: 100%; margin-top: 20px;"></div>
+    <button id="optimize-route" style="margin-top: 10px;">Optimize Route</button>
+    
+    <!-- Route Summary Section -->
+    <h2>Route Summary</h2>
+    <div id="route-summary"></div>
+    <button id="open-google-maps" style="display: none; margin-top: 10px;">Open in Google Maps</button>
+
+    <button data-screen="main-screen">Back to Main</button></div>
+
+  <!-- Settings & Info Screen -->
+  <div id="settings-screen" class="screen">
+    <h1>Settings & Info</h1>
+    <p>Manage app settings and view information here.</p>
+    <button data-screen="main-screen">Back to Main</button>
+  </div>
+
+<script>
+let map, directionsService, directionsRenderer;
+
+document.addEventListener('DOMContentLoaded', () => {
+  const screens = document.querySelectorAll('.screen');
+  const buttons = document.querySelectorAll('[data-screen]');
+  const stopListElement = document.getElementById('stop-list');
+  const stopForm = document.getElementById('stop-form');
+  const stopNameInput = document.getElementById('stop-name');
+  const stopAddressInput = document.getElementById('stop-address');
+  const saveJsonButton = document.getElementById('save-json');
+  const searchInput = document.getElementById('stop-search');
+  const suggestionList = document.getElementById('suggestion-list');
+  const selectedStops = document.getElementById('selected-stops');
+  const optimizeRouteButton = document.getElementById('optimize-route');
+  const completedStops = document.getElementById('completed-stops');
+  const routeSummaryElement = document.getElementById('route-summary');
+  const depotAddress = "102 Industrial Drive, Chester, Illinois";
+  let currentStops = [];
+  let selectedStopsArray = [];
+
+// Optimize and Display Route
+optimizeRouteButton.addEventListener('click', () => {
+  if (selectedStopsArray.length < 2) {
+    alert('Please add at least two stops to optimize the route.');
+    return;
+  }
+
+  const waypoints = selectedStopsArray.map(stop => ({
+    location: stop.Address,
+    stopover: true,
+  }));
+
+  directionsService.route(
+    {
+      origin: depotAddress,
+      destination: depotAddress,
+      waypoints,
+      optimizeWaypoints: true,
+      travelMode: google.maps.TravelMode.DRIVING,
+    },
+    (result, status) => {
+      if (status === 'OK') {
+        directionsRenderer.setDirections(result);
+
+        // Display Route Summary
+        const route = result.routes[0];
+        const routeSummaryElement = document.getElementById('route-summary');
+        routeSummaryElement.innerHTML = '<h3>Optimized Route Details:</h3>';
+
+        let totalDistance = 0;
+        let totalDuration = 0;
+        let totalStopDuration = 0;
+
+        // Iterate over `selectedStopsArray` instead of `selectedStops.children`
+        selectedStopsArray.forEach((stop, index) => {
+          const leg = route.legs[index];
+
+          if (leg) {
+            totalDistance += leg.distance.value;
+            totalDuration += leg.duration.value;
+
+            // Access duration from input if it exists
+            const stopElement = selectedStops.querySelector(`[data-address="${stop.Address}"]`);
+            const timeInput = stopElement ? stopElement.querySelector('input[type="number"]') : null;
+            const stopTime = timeInput ? parseInt(timeInput.value, 10) || 0 : 20; // Default to 20 if missing
+            totalStopDuration += stopTime * 60;
+
+            routeSummaryElement.innerHTML += `
+              <p><strong>Leg ${index + 1}:</strong> ${leg.start_address} to ${leg.end_address} <br>
+              Distance: ${leg.distance.text}, Driving Duration: ${leg.duration.text}, Stop Time: ${stopTime} minutes</p>
+            `;
+          }
+        });
+
+        routeSummaryElement.innerHTML += `
+          <p><strong>Total Distance:</strong> ${(totalDistance / 1000).toFixed(2)} km</p>
+          <p><strong>Total Duration (including stops):</strong> ${Math.floor((totalDuration + totalStopDuration) / 60)} minutes</p>
+        `;
+
+        // Add "Open in Google Maps" Button
+        const googleMapsLink = createGoogleMapsLink(selectedStopsArray, depotAddress);
+        const openGoogleMapsButton = document.createElement('button');
+        openGoogleMapsButton.textContent = 'Open in Google Maps';
+        openGoogleMapsButton.style.marginTop = '10px';
+        openGoogleMapsButton.addEventListener('click', () => {
+          window.open(googleMapsLink, '_blank');
+        });
+
+        routeSummaryElement.appendChild(openGoogleMapsButton);
+      } else {
+        alert('Failed to optimize route: ' + status);
+      }
+    }
+  );
+});
+
+// Helper Function to Create Google Maps Link
+function createGoogleMapsLinks(stopsArray, depot) {
+  const maxWaypoints = 23; // Google Maps limits to 23 waypoints
+  const links = [];
+
+  for (let i = 0; i < stopsArray.length; i += maxWaypoints) {
+    const waypoints = stopsArray.slice(i, i + maxWaypoints);
+    let link = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(depot)}&destination=${encodeURIComponent(depot)}&travelmode=driving`;
+
+    // Add waypoints to the URL
+    if (waypoints.length > 0) {
+      const waypointAddresses = waypoints.map(stop => encodeURIComponent(stop.Address)).join('|');
+      link += `&waypoints=${waypointAddresses}`;
+    }
+
+    links.push(link);
+  }
+
+  return links;
+}
+
+// Update the optimizeRouteButton logic to handle multiple links
+optimizeRouteButton.addEventListener('click', () => {
+  if (selectedStopsArray.length < 2) {
+    alert('Please add at least two stops to optimize the route.');
+    return;
+  }
+
+  const waypoints = selectedStopsArray.map(stop => ({
+    location: stop.Address,
+    stopover: true,
+  }));
+
+  directionsService.route(
+    {
+      origin: depotAddress,
+      destination: depotAddress,
+      waypoints,
+      optimizeWaypoints: true,
+      travelMode: google.maps.TravelMode.DRIVING,
+    },
+    (result, status) => {
+      if (status === 'OK') {
+        directionsRenderer.setDirections(result);
+
+        // Display Route Summary
+        const route = result.routes[0];
+        const routeSummaryElement = document.getElementById('route-summary');
+        routeSummaryElement.innerHTML = '<h3>Optimized Route Details:</h3>';
+
+        let totalDistance = 0;
+        let totalDuration = 0;
+
+        route.legs.forEach((leg, index) => {
+          totalDistance += leg.distance.value;
+          totalDuration += leg.duration.value;
+
+          routeSummaryElement.innerHTML += `
+            <p><strong>Leg ${index + 1}:</strong> ${leg.start_address} to ${leg.end_address} <br>
+            Distance: ${leg.distance.text}, Duration: ${leg.duration.text}</p>
+          `;
+        });
+
+        routeSummaryElement.innerHTML += `
+          <p><strong>Total Distance:</strong> ${(totalDistance / 1000 * 0.621371).toFixed(2)} miles</p>
+          <p><strong>Total Duration:</strong> ${Math.floor(totalDuration / 60)} minutes</p>
+        `;
+
+        // Create Google Maps Links for Segments
+        const googleMapsLinks = createGoogleMapsLinks(selectedStopsArray, depotAddress);
+        googleMapsLinks.forEach((link, index) => {
+          const openGoogleMapsButton = document.createElement('button');
+          openGoogleMapsButton.textContent = `Open in Google Maps (Segment ${index + 1})`;
+          openGoogleMapsButton.style.marginTop = '10px';
+          openGoogleMapsButton.addEventListener('click', () => {
+            window.open(link, '_blank');
+          });
+          routeSummaryElement.appendChild(openGoogleMapsButton);
+        });
+      } else {
+        alert('Failed to optimize route: ' + status);
+      }
+    }
+  );
+});
+
+  // Initialize Map
+  function initMap() {
+    map = new google.maps.Map(document.getElementById('map'), {
+      center: { lat: 37.7749, lng: -122.4194 },
+      zoom: 8,
+    });
+
+    directionsService = new google.maps.DirectionsService();
+    directionsRenderer = new google.maps.DirectionsRenderer();
+    directionsRenderer.setMap(map);
+  }
+
+  window.initMap = initMap;
+
+  // Screen Navigation Logic
+  buttons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const targetScreen = button.getAttribute('data-screen');
+      screens.forEach((screen) => screen.classList.remove('active'));
+      document.getElementById(targetScreen).classList.add('active');
+
+      if (targetScreen === 'driver-screen') {
+        initMap();
+        renderDriverSuggestions();
+      }
+    });
+  });
+
+  // Fetch Stops from JSON
+  fetch('Processed_Locations_List.json')
+    .then((response) => response.json())
+    .then((data) => {
+      currentStops = data;
+      console.log("Fetched stops:", currentStops); // Debug: Log fetched stops
+      renderStopList();
+    })
+    .catch((error) => console.error('Error loading stops:', error));
+
+  // Render Stop List in Admin Section
+  function renderStopList() {
+    stopListElement.innerHTML = '';
+    currentStops.forEach((stop, index) => {
+      const listItem = document.createElement('li');
+      listItem.textContent = `${stop.Location} - ${stop.Address}`;
+      listItem.dataset.index = index;
+
+      const editButton = document.createElement('button');
+      editButton.textContent = 'Edit';
+      editButton.addEventListener('click', () => editStop(index));
+
+      const deleteButton = document.createElement('button');
+      deleteButton.textContent = 'Delete';
+      deleteButton.addEventListener('click', () => deleteStop(index));
+
+      listItem.appendChild(editButton);
+      listItem.appendChild(deleteButton);
+      stopListElement.appendChild(listItem);
+    });
+  }
+
+  // Render Driver Suggestions
+  function renderDriverSuggestions() {
+    console.log("Rendering driver suggestions..."); // Debug
+    suggestionList.innerHTML = '';
+    searchInput.addEventListener('input', () => filterStops(searchInput.value));
+  }
+
+  // Filter Driver Suggestions
+  function filterStops(query) {
+  if (!query) {
+    suggestionList.style.display = 'none';
+    return;
+  }
+
+  const filteredStops = currentStops.filter(stop =>
+    stop.Location.toLowerCase().includes(query.toLowerCase())
+  );
+
+  suggestionList.innerHTML = '';
+  if (filteredStops.length > 0) {
+    filteredStops.forEach(stop => {
+      const listItem = document.createElement('li');
+      listItem.textContent = stop.Location;
+      listItem.dataset.address = stop.Address;
+      listItem.style.cursor = 'pointer';
+
+      listItem.addEventListener('click', () => {
+        addStopToRoute(stop);
+        searchInput.value = ''; // Clear the search box
+        suggestionList.innerHTML = ''; // Clear suggestions
+      });
+
+      suggestionList.appendChild(listItem);
+    });
+    suggestionList.style.display = 'block';
+  } else {
+    suggestionList.style.display = 'none';
+  }
+}
+
+
+  // Add a Stop to Driver's Selected Stops
+function addStopToRoute(stop) {
+  selectedStopsArray.push(stop);
+
+  const listItem = document.createElement('li');
+  listItem.textContent = `${stop.Location} - ${stop.Address}`;
+  listItem.dataset.address = stop.Address;
+
+  // Create a small time input field for stop duration
+  const timeInput = document.createElement('input');
+  timeInput.type = 'number';
+  timeInput.value = 20; // Default to 20 minutes
+  timeInput.min = 1;
+  timeInput.style.width = '50px'; // Smaller width
+  timeInput.style.marginLeft = '10px';
+  timeInput.title = 'Adjust stop duration in minutes';
+
+  // Add "Mark as Completed" Button
+  const completeButton = document.createElement('button');
+  completeButton.textContent = 'Mark as Completed';
+  completeButton.style.marginLeft = '10px';
+  completeButton.addEventListener('click', () => markStopCompleted(listItem));
+
+  listItem.appendChild(timeInput);
+  listItem.appendChild(completeButton);
+  selectedStops.appendChild(listItem);
+
+  // Clear suggestion input after adding a stop
+  searchInput.value = '';
+  suggestionList.innerHTML = '';
+}
+
+  // Save Custom Stops
+  stopForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+
+    const name = stopNameInput.value.trim();
+    const address = stopAddressInput.value.trim();
+
+    if (name && address) {
+      const existingIndex = currentStops.findIndex(
+        (stop) => stop.Location.toLowerCase() === name.toLowerCase()
+      );
+
+      if (existingIndex >= 0) {
+        currentStops[existingIndex] = { Location: name, Address: address };
+      } else {
+        currentStops.push({ Location: name, Address: address });
+      }
+
+      renderStopList();
+      stopForm.reset();
+    }
+  });
+
+  // Mark Stop as Completed
+  function markStopCompleted(listItem) {
+    listItem.style.textDecoration = 'line-through';
+    listItem.style.color = 'gray';
+
+    completedStops.appendChild(listItem);
+
+    const completeButton = listItem.querySelector('button');
+    if (completeButton) completeButton.remove();
+  }
+
+  // Save JSON Updates
+  saveJsonButton.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(currentStops, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'Updated_Locations_List.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+});
+
+</script>
+
+</body>
+</html>
