@@ -1,5 +1,5 @@
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js')
+  navigator.serviceWorker.register('./service-worker.js')
     .then(registration => {
       console.log('Service Worker registered with scope:', registration.scope);
     })
@@ -93,15 +93,15 @@ if ('serviceWorker' in navigator) {
     <h1>Welcome to the Vending Route Manager</h1>
     <div class="button-container">
       <button class="icon-button" data-screen="admin-screen">
-        <img src="admin-icon.png" alt="Admin Tools">
+        <img src="./admin-icon.png" alt="Admin Tools">
         <p>Admin Tools</p>
       </button>
       <button class="icon-button" data-screen="driver-screen">
-        <img src="driver-icon.png" alt="Driver Dashboard">
+        <img src="./driver-icon.png" alt="Driver Dashboard">
         <p>Driver Dashboard</p>
       </button>
       <button class="icon-button" data-screen="settings-screen">
-        <img src="settings-icon.png" alt="Settings & Info">
+        <img src="./settings-icon.png" alt="Settings & Info">
         <p>Settings & Info</p>
       </button>
     </div>
